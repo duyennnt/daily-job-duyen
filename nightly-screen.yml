@@ -1,0 +1,39 @@
+name: nightly-screen
+
+on:
+  schedule:
+    - cron: '0 2 * * 2-6'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly-screen
+  cancel-in-progress: false
+
+jobs:
+  screen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run full-universe screen (sends email via Resend if configured)
+        env:
+          FINNHUB_KEY: ${{ secrets.FINNHUB_KEY }}
+          GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
+          RESEND_KEY: ${{ secrets.RESEND_KEY }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          SITE_URL: 'https://duyennnt.github.io/stock-watchlist/'
+        run: node scripts/nightly.mjs
+      - name: Commit results
+        run: |
+          git config user.name "screen-bot"
+          git config user.email "actions@github.com"
+          git add screen-results.json
+          git diff --cached --quiet || git commit -m "Nightly screen $(date -u +%F)"
+          git push

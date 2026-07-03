@@ -229,6 +229,14 @@
     <input class="gr-in" id="cGmax" type="number" step="1" style="width:48px" value="50">
     <span style="font-family:var(--mono);font-size:10.5px;color:var(--faint)">% · D/E ≤</span>
     <input class="gr-in" id="cDte" type="number" step="0.05" min="0" style="width:56px" value="0.33">
+    <label style="font-family:var(--mono);font-size:10.5px;color:var(--pos);display:flex;align-items:center;gap:5px;cursor:pointer">
+      <input type="checkbox" id="deepScan" style="accent-color:var(--pos)"> Deep scan: full US market
+    </label>
+    <span style="font-family:var(--mono);font-size:10.5px;color:var(--faint)">cap $</span>
+    <input class="gr-in" id="cCapMin" type="number" step="0.1" min="0" style="width:52px" value="0.3">
+    <span style="font-family:var(--mono);font-size:10.5px;color:var(--faint)">–</span>
+    <input class="gr-in" id="cCapMax" type="number" step="1" min="0" style="width:52px" value="10">
+    <span style="font-family:var(--mono);font-size:10.5px;color:var(--faint)">B</span>
     <span class="status" id="scrStatus">Dividend-adjusted PEG · shuffled universe · checked names cached 24h, so each run digs deeper</span>
   </div>
   <div id="scrResults"></div>
@@ -252,6 +260,7 @@
     <button class="btn" id="reset">Reset prices</button>
     <button class="btn go" id="exportBtn" title="Download your notes, tickers & settings as a JSON backup">⬇ Export</button>
     <button class="btn go" id="importBtn" title="Restore from a backup file">⬆ Import</button>
+    <button class="btn" id="restoreHidden" style="display:none"></button>
     <input type="file" id="importFile" accept=".json,application/json" style="display:none">
   </div>
   <div class="saved" id="savedLine"></div>
@@ -295,54 +304,8 @@
 const KEY='watchlist_v1';
 
 // Reference data from our conversation. p = last-known price (default), eps = approx TTM, tgt = analyst target avg.
-const DATA=[
- {t:'NICE',n:'NICE Ltd.',tier:1,sec:'Enterprise Software',tags:['Software','AI','Value'],p:88.13,eps:9.71,gr:12,ipe:28,tgt:131,lo:null,hi:null,
-  cat:'Cloud/AI ARR growth · Cognigy integration · watch net-retention rate',ins:'neu',
-  risk:'AI disruption from Salesforce Agentforce — arguably over-discounted',asOf:"Q1 '26",url:'NICE'},
- {t:'REGN',n:'Regeneron',tier:1,sec:'Biotech',tags:['Biotech','Value','Defensive'],p:623.54,eps:44.31,gr:8,ipe:16,tgt:833,lo:507.65,hi:821.11,
-  cat:'PDUFA: linvoseltamab Jul 10 / odronextamab Jul 30 · Q2 earnings',ins:'neu',
-  risk:'Eylea biosimilar erosion (patent cliff)',asOf:"Jun 30 '26",url:'REGN'},
- {t:'ADUS',n:'Addus HomeCare',tier:1,sec:'Home Care',tags:['HomeCare','Value','Demographic'],p:105.41,eps:6.48,gr:14,ipe:20,tgt:139,lo:88.96,hi:136.72,
-  cat:'Q2 earnings (Aug) · Medicaid / OBBBA policy decisions',ins:'neu',
-  risk:'~97% of revenue is Medicaid — concentrated policy risk',asOf:"Jul 1 '26",url:'ADUS'},
-
- {t:'ELMD',n:'Electromed',tier:2,sec:'Medical Device',tags:['MedDevice','Quality','78% GM'],p:37.97,eps:0.85,gr:18,ipe:28,tgt:36,lo:17.73,hi:40.00,
-  cat:'Q4 earnings ~Aug 25 · SmartVest market penetration',ins:'sell',
-  risk:'~45x earnings at all-time highs; CFO selling',asOf:"Jun 8 '26",url:'ELMD'},
- {t:'QLYS',n:'Qualys',tier:2,sec:'Cybersecurity',tags:['Cyber','AI','82% GM'],p:138.74,eps:5.70,gr:8,ipe:32,tgt:122,lo:74.51,hi:154,
-  cat:'Q2 earnings (early Aug) · agentic AI Risk-Ops rollout',ins:'sell',
-  risk:'Growth slowed to 7–8%; trades above analyst targets after 65% run',asOf:"Jul 1 '26",url:'QLYS'},
- {t:'AMD',n:'Advanced Micro Devices',tier:2,sec:'Semiconductors',tags:['Semis','AI','Momentum'],p:575,eps:3.00,gr:35,ipe:30,tgt:615,lo:133.50,hi:584.73,
-  cat:'Q2 earnings ~Aug 4 · AI server / MI-series demand',ins:'neu',
-  risk:'~190x trailing P/E — priced for AI hypergrowth after 4x run',asOf:"Jul 1 '26",url:'AMD'},
- {t:'VMD',n:'Viemed Healthcare',tier:2,sec:'Home Health',tags:['HomeHealth','Growth'],p:11.40,eps:0.37,gr:20,ipe:22,tgt:null,lo:5.93,hi:11.88,
-  cat:'Q2 earnings ~Aug 5 · sleep / maternal / staffing expansion',ins:'sell',
-  risk:'~31x P/E near highs; Q1 EPS miss; insider selling',asOf:"Jun 27 '26",url:'VMD'},
- {t:'BKTI',n:'BK Technologies',tier:2,sec:'Public-Safety Comms',tags:['PubSafety','SmallCap','No debt'],p:86.04,eps:3.55,gr:15,ipe:22,tgt:97,lo:36.17,hi:104.55,
-  cat:'BKR9500 FCC approval 2H26, shipments 1H27 · Q2 earnings ~Aug 13',ins:'neu',
-  risk:'Tiny ~3.7M-share float; the real catalyst is a 2027 event',asOf:"Jun 30 '26",url:'BKTI'},
-
- {t:'CSCO',n:'Cisco Systems',tier:2,sec:'Networking / AI Infra',tags:['Networking','AI','Momentum'],p:112.69,eps:3.00,gr:12,ipe:22,tgt:127,lo:null,hi:120.41,
-  cat:'Q4 FY26 earnings ~mid-Aug · $9B AI-order trajectory · div ex-date Jul 6',ins:'sell',
-  risk:'~38x trailing P/E after 33% YTD run; gross-margin squeeze from memory costs; net insider selling',asOf:"Jul 2 '26",url:'CSCO'},
-
- {t:'SOFI',n:'SoFi Technologies',tier:3,sec:'Fintech',tags:['Fintech','Growth','Contested'],p:16.24,eps:0.50,gr:30,ipe:14,tgt:21.5,lo:null,hi:null,
-  cat:'Q2 earnings ~Jul 28–29 · tech-platform segment recovery',ins:'buy',
-  risk:'Muddy Waters short thesis on earnings quality; tech platform −27%',asOf:"Jun '26",url:'SOFI'},
-
- {t:'MPLT',n:'MapLight Therapeutics',tier:4,sec:'Biotech (clinical)',tags:['Biotech','Clinical','Binary'],p:35.17,eps:null,tgt:40,lo:12.24,hi:37.03,
-  cat:'ZEPHYR schizophrenia Ph2 topline by mid-Aug 2026',ins:'sell',
-  risk:'Binary readout; IRIS autism trial already missed its endpoint',asOf:"Jul 1 '26",url:'MPLT'},
- {t:'VKTX',n:'Viking Therapeutics',tier:4,sec:'Biotech (clinical)',tags:['Biotech','Obesity','Clinical'],p:null,eps:null,tgt:null,lo:null,hi:null,
-  cat:'Ph1 maintenance data Q3 26 · oral VK2735 → Ph3 · VANQUISH pivotal 2027',ins:'neu',
-  risk:'The obesity data that would drive a takeout is a 2027 event',asOf:'—',url:'VKTX'},
- {t:'TERN',n:'Terns Pharmaceuticals',tier:4,sec:'Biotech (clinical)',tags:['Biotech','Oncology','Clinical'],p:null,eps:null,tgt:null,lo:null,hi:null,
-  cat:'Additional CARDINAL Ph1 CML data during 2026',ins:'neu',
-  risk:'Binary; exact readout timing unspecified',asOf:'—',url:'TERN'},
- {t:'ABVX',n:'Abivax',tier:4,sec:'Biotech (clinical)',tags:['Biotech','IBD','Catalyst-done'],p:null,eps:null,tgt:null,lo:null,hi:null,
-  cat:'NDA filing late Q4 26 · Crohn’s Ph2b mid-2027',ins:'neu',
-  risk:'Marquee UC catalyst already delivered; stock ran ~1,700%',asOf:'—',url:'ABVX'},
-];
+const DATA=[];  // baked-in cards removed by request — every card now comes from your own adds.
+// To bake a researched card back in, add an object here with: t,n,tier,sec,tags,p,eps,gr,ipe,tgt,lo,hi,cat,ins,risk,asOf,url
 
 const TIERS={
  1:{tag:'TIER 1',name:'Value + catalyst',thesis:'Cheap for a nameable reason you can underwrite.'},
@@ -356,7 +319,15 @@ let lastSaved=null;
 let memStore=null; // fallback if localStorage is unavailable
 const CKEY='watchlist_custom';
 let customs=[]; let memCustom=null;
-function allData(){ return DATA.concat(customs); }
+const HKEY='hidden_builtins';
+let hiddenB=[]; let memHidden=null;
+function loadHidden(){ try{ hiddenB=JSON.parse(localStorage.getItem(HKEY)||'[]')||[]; }catch(e){ hiddenB=memHidden||[]; } }
+function saveHidden(){ const v=JSON.stringify(hiddenB); try{ localStorage.setItem(HKEY,v); }catch(e){ memHidden=hiddenB; } }
+const OKEY='builtin_over';
+let overB={}; let memOver=null;
+function loadOver(){ try{ overB=JSON.parse(localStorage.getItem(OKEY)||'{}')||{}; }catch(e){ overB=memOver||{}; } }
+function saveOver(){ const v=JSON.stringify(overB); try{ localStorage.setItem(OKEY,v); }catch(e){ memOver=overB; } }
+function allData(){ return DATA.filter(d=>!hiddenB.includes(d.t)).map(d=>overB[d.t]?Object.assign({},d,overB[d.t]):d).concat(customs); }
 function loadCustoms(){
   let raw=null;
   try{ raw=localStorage.getItem(CKEY); }catch(e){ raw=memCustom; }
@@ -372,6 +343,8 @@ let filterTier='all', query='', sortBy='upside';
 
 function load(){
   loadCustoms();
+  loadHidden();
+  loadOver();
   let raw=null;
   try{ raw=localStorage.getItem(KEY); }catch(e){ raw=memStore; }
   if(raw){ try{ const parsed=JSON.parse(raw); state=parsed.state||{}; lastSaved=parsed.lastSaved||null; }catch(e){} }
@@ -622,13 +595,13 @@ function card(d){
     <div class="chart-box" data-newsbox="${d.t}"></div>
     <div class="chart-box" data-vchartbox="${d.t}"></div>
     <div class="chart-box" data-chartbox="${d.t}"></div>
-    <div class="tags">${d.tags.map(x=>`<span class="tag">${x}</span>`).join('')}${d.custom?`<button class="tag" data-rm="${d.t}" title="Remove from watchlist" style="cursor:pointer;color:var(--neg);border-color:rgba(229,107,95,.4);background:transparent">✕ remove</button><button class="tag" data-fill="${d.t}" title="Auto-fill EPS & 52-week range from Finnhub" style="cursor:pointer;color:var(--pos);border-color:rgba(64,185,138,.4);background:transparent">↻ autofill</button>`:''}</div>
+    <div class="tags">${d.tags.map(x=>`<span class="tag">${x}</span>`).join('')}<button class="tag" data-rm="${d.t}" title="Remove from watchlist${d.custom?'':' (restorable)'}" style="cursor:pointer;color:var(--neg);border-color:rgba(229,107,95,.4);background:transparent">✕ remove</button><button class="tag" data-fill="${d.t}" title="Auto-fill/refresh EPS, 52-wk range, insider read & headlines" style="cursor:pointer;color:var(--pos);border-color:rgba(64,185,138,.4);background:transparent">↻ autofill</button></div>
     ${d.custom?`<div class="metrics" style="grid-template-columns:1fr 1fr 1fr 1fr">${[['tgt','Target $'],['eps','EPS ttm'],['lo','52w low'],['hi','52w high']].map(([f,l])=>`<div class="m"><div class="mk">${l}</div><input class="price-in" style="width:100%;font-size:13px;padding:4px 6px" type="number" step="0.01" inputmode="decimal" value="${d[f]??''}" data-tkr="${d.t}" data-field="${f}" placeholder="—"></div>`).join('')}</div>`:''}
-    ${d.custom&&d.points&&d.points.length?`<div style="border:1px solid var(--line);border-left:2px solid var(--accent);border-radius:9px;padding:8px 10px">
+    ${d.points&&d.points.length?`<div style="border:1px solid var(--line);border-left:2px solid var(--accent);border-radius:9px;padding:8px 10px">
       <div style="font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin-bottom:4px">Auto research</div>
       ${d.points.map(pt=>`<div style="font-size:12px;color:var(--ink);line-height:1.45;margin-top:3px">· ${pt.replace(/</g,'&lt;')}</div>`).join('')}
     </div>`:''}
-    ${d.custom&&d.news&&d.news.length?`<div style="border:1px solid var(--line);border-radius:9px;overflow:hidden">
+    ${d.news&&d.news.length?`<div style="border:1px solid var(--line);border-radius:9px;overflow:hidden">
       <div style="font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);padding:6px 10px 2px">Research headlines</div>
       ${d.news.map(n=>`<a class="news-item" style="padding:6px 10px" href="${n.u}" target="_blank" rel="noopener">
         <div class="nh" style="font-size:12px">${(n.h||'').replace(/</g,'&lt;')}</div>
@@ -761,7 +734,10 @@ function wire(){
     b.addEventListener('click',async e=>{
       const sym=e.target.dataset.fill; const key=getKey();
       if(!key){ setAddStatus('Save a Finnhub key first — autofill needs it','err'); return; }
-      const d=customs.find(x=>x.t===sym); if(!d)return;
+      const custom=customs.find(x=>x.t===sym);
+      const base=custom||DATA.find(x=>x.t===sym); if(!base)return;
+      const d=custom||Object.assign({},base,overB[sym]||{});
+      const isCustom=!!custom;
       e.target.textContent='…';
       try{
         const mt=await fetchMetrics(sym,key);
@@ -788,15 +764,24 @@ function wire(){
         // refresh research headlines + auto points
         try{ d.news=pickTopNews(await fetchNews(sym)); }catch(x){}
         try{ const recs=await fetchRecs(sym,key); d.p=state[sym]?.price??d.p; d.points=buildAutoPoints(d,recs,insNet); }catch(x){}
-        saveCustoms(); render();
+        if(isCustom){ saveCustoms(); }
+        else { overB[sym]={eps:d.eps,lo:d.lo,hi:d.hi,gr:d.gr,ins:d.ins,news:d.news,points:d.points}; saveOver(); }
+        render();
         setAddStatus(sym+' autofilled: '+(mt&&mt.eps!==null?('EPS '+mt.eps.toFixed(2)):'no EPS')+(mt&&mt.lo!==null?(' · 52w $'+mt.lo.toFixed(0)+'–$'+(mt.hi||0).toFixed(0)):''),'ok');
       }catch(err){ e.target.textContent='↻ autofill'; setAddStatus('Autofill failed for '+sym,'err'); }
     });
   });
+  const rh=document.getElementById('restoreHidden');
+  if(rh){
+    if(hiddenB.length){ rh.style.display=''; rh.textContent='↺ Restore '+hiddenB.length+' removed'; }
+    else rh.style.display='none';
+  }
   document.querySelectorAll('[data-rm]').forEach(b=>{
     b.addEventListener('click',e=>{
       const sym=e.target.dataset.rm;
-      if(confirm('Remove '+sym+' from the watchlist?')) removeTicker(sym);
+      if(!confirm('Remove '+sym+' from the watchlist?'))return;
+      if(customs.some(x=>x.t===sym)) removeTicker(sym);
+      else { hiddenB.push(sym); saveHidden(); render(); }
     });
   });
   document.querySelectorAll('.chart-btn[data-full]').forEach(btn=>{
@@ -1081,6 +1066,25 @@ function restoreCrit(){
 // Curated liquid small/mid-cap universe (edit freely). Big tech excluded per the script.
 const UNIVERSE=['ELF','CELH','DECK','CROX','ULTA','LULU','ONON','DUOL','TTD','MNDY','GLBE','WIX','DOCS','PCTY','PAYC','TNET','EXLS','HRMY','CPRX','HALO','ADMA','LNTH','MEDP','AXSM','KRYS','VCEL','PRCT','TMDX','INSP','IRMD','ELMD','VMD','BKTI','CRAI','HURN','FIX','IESC','STRL','ROAD','GMS','DY','MLI','AAON','CSWI','TREX','WING','CAVA','TXRH','SHAK','LTH','PLNT','BOOT','ANF','AEO','URBN','WSM','FND','DKS','OLLI','FIVE','BROS','TOST','APPF','GWRE','MANH','TYL','DSGX','CVLT','QLYS','TENB','CYBR','NET','DDOG','ZS','CRWD','MDB','ESTC','GTLB','IOT','CFLT','BRZE','PD','ASAN','DOCN','FSLY','AKAM','JKHY','EPAM','GLOB','DAVA','NSP','KFY','RHI','HSII','ASGN','ICFI','FORR','VRNS','RPD','SPSC','ALRM','ITRI','BMI','WTS','ZWS','XYL','SITE','WMS','AZEK','DOOR','SSD','BLDR','EXP','ROCK','APOG','PATK','LCII','DORM','SMP','ALSN','GTES','TKR','AIT','FAST','WCC','MSM','PNR','FELE','FLS','ITT','CW','HEI','WWD','AXON','KTOS','AVAV','MRCY','LDOS','CACI','SAIC','BAH','VVX','PSN','CBZ','MMS'];
 let scrAbort=false;
+// ---- Deep scan: full US universe via Finnhub /stock/symbol (one free call, cached 7d) ----
+async function loadUniverseUS(key){
+  try{ const raw=localStorage.getItem('uni_us');
+    if(raw){ const o=JSON.parse(raw); if(Date.now()-o.ts<7*24*3600e3 && o.list&&o.list.length) return o.list; } }catch(e){}
+  const r=await fetch(`https://finnhub.io/api/v1/stock/symbol?exchange=US&token=${encodeURIComponent(key)}`);
+  if(!r.ok)throw new Error('universe-fetch');
+  const j=await r.json();
+  const list=(Array.isArray(j)?j:[])
+    .filter(x=>x.type==='Common Stock' && /^[A-Z]{1,5}$/.test(x.symbol||''))
+    .map(x=>x.symbol).sort();
+  if(!list.length)throw new Error('universe-empty');
+  try{ localStorage.setItem('uni_us',JSON.stringify({ts:Date.now(),list})); }catch(e){}
+  return list;
+}
+function deepState(){
+  try{ return JSON.parse(localStorage.getItem('deep_state')||'null')||{idx:0,qual:[],misses:[],done:false}; }
+  catch(e){ return {idx:0,qual:[],misses:[],done:false}; }
+}
+function saveDeepState(s){ try{ localStorage.setItem('deep_state',JSON.stringify(s)); }catch(e){} }
 function extractMetrics(m){
   if(!m)return null;
   const pick=(...ks)=>{ for(const k of ks){ const v=Number(m[k]); if(!isNaN(v)&&isFinite(v)) return v; } return null; };
@@ -1167,32 +1171,54 @@ async function runLynchScreen(){
   const st=document.getElementById('scrStatus');
   if(!key){ st.textContent='Screener needs the Finnhub key (Live prices bar)'; st.className='status err'; return; }
   const c=lynchCrit();
+  const deep=document.getElementById('deepScan').checked;
+  const capMin=(Number(document.getElementById('cCapMin').value)||0)*1000;   // $B → $M
+  const capMax=(Number(document.getElementById('cCapMax').value)||1e6)*1000;
   scrAbort=false;
   document.getElementById('runScreen').style.display='none';
   document.getElementById('stopScreen').style.display='';
-  const pool=[...new Set(UNIVERSE)].filter(t=>/^[A-Z.\-]+$/.test(t));
-  for(let i=pool.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [pool[i],pool[j]]=[pool[j],pool[i]]; }
-  let qual=[], misses=[], tried=0, apiCalls=0;
+  let pool, ds=null, qual=[], misses=[];
+  if(deep){
+    st.className='status'; st.textContent='Loading full US symbol list…';
+    try{ pool=await loadUniverseUS(key); }
+    catch(e){ st.className='status err'; st.textContent='Couldn\'t load the US universe — try again'; 
+      document.getElementById('runScreen').style.display=''; document.getElementById('stopScreen').style.display='none'; return; }
+    ds=deepState();
+    if(ds.done||ds.idx>=pool.length){ ds={idx:0,qual:ds.qual||[],misses:ds.misses||[],done:false}; } // new full pass keeps old finds
+    qual=ds.qual||[]; misses=ds.misses||[];
+  } else {
+    pool=[...new Set(UNIVERSE)].filter(t=>/^[A-Z.\-]+$/.test(t));
+    for(let i=pool.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [pool[i],pool[j]]=[pool[j],pool[i]]; }
+  }
+  const maxHits=deep?200:20;
+  let tried=0, apiCalls=0, startIdx=deep?ds.idx:0;
   renderScreen(qual,misses,null);
-  for(const t of pool){
-    if(scrAbort||qual.length>=20)break;
+  for(let i=startIdx;i<pool.length;i++){
+    const t=pool[i];
+    if(scrAbort||qual.length>=maxHits)break;
     tried++;
     st.className='status';
-    st.textContent='Screening '+t+' … '+qual.length+' qualified · '+misses.length+' near · '+tried+'/'+pool.length;
-    const bar=document.getElementById('scrBarFill'); if(bar)bar.style.width=(tried/pool.length*100)+'%';
+    st.textContent=(deep?'Deep scan ':'Screening ')+t+' … '+qual.length+' qualified · '+misses.length+' near · position '+(i+1)+'/'+pool.length+(deep?' (resumes across visits)':'');
+    const bar=document.getElementById('scrBarFill'); if(bar)bar.style.width=((i+1)/pool.length*100)+'%';
     try{
       const {x,cached}=await getMetricsCached(t,key);
-      const j=judgeLynch(x,c);
-      if(j.pass){ const name=await getNameCached(t,key); qual.push({t,name,x,peg:j.peg}); renderScreen(qual,misses,null); }
-      else if(j.fails.length===1&&x&&x.pe>0){ misses.push({t,x,j}); if(misses.length<=12)renderScreen(qual,misses,null); }
+      // cap-band filter (deep mode): skip silently if outside band or unknown cap
+      const inBand = !deep || (x&&x.mc!==null&&x.mc>=capMin&&x.mc<=capMax);
+      if(inBand){
+        const j=judgeLynch(x,c);
+        if(j.pass&&!qual.some(q=>q.t===t)){ const name=await getNameCached(t,key); qual.push({t,name,x,peg:j.peg}); renderScreen(qual,misses,null); }
+        else if(!j.pass&&j.fails.length===1&&x&&x.pe>0&&!misses.some(q=>q.t===t)){ misses.push({t,x,j}); if(misses.length<=12)renderScreen(qual,misses,null); }
+      }
       if(!cached){ apiCalls++; await new Promise(r=>setTimeout(r,1100)); }
     }catch(e){
-      if(e.message==='rate-limit'){ st.textContent='Rate limit — pausing 30s…'; await new Promise(r=>setTimeout(r,30000)); }
+      if(e.message==='rate-limit'){ st.textContent='Rate limit — pausing 30s… (progress is saved)'; await new Promise(r=>setTimeout(r,30000)); i--; tried--; continue; }
     }
+    if(deep){ ds.idx=i+1; ds.qual=qual; ds.misses=misses.slice(0,50); if(ds.idx>=pool.length)ds.done=true; saveDeepState(ds); }
   }
   document.getElementById('runScreen').style.display='';
   document.getElementById('stopScreen').style.display='none';
-  const doneTxt=(scrAbort?'Stopped':'Done')+' — '+qual.length+' qualified, '+misses.length+' near-misses, '+tried+' checked ('+apiCalls+' fresh, rest cached) · '+new Date().toLocaleTimeString();
+  const pos=deep?(' · position '+ds.idx+'/'+pool.length+(ds.done?' — FULL PASS COMPLETE':' — resumes here next run')):'';
+  const doneTxt=(scrAbort?'Paused':'Done')+' — '+qual.length+' qualified, '+misses.length+' near-misses, '+tried+' checked this session ('+apiCalls+' fresh)'+pos+' · '+new Date().toLocaleTimeString();
   st.className='status '+(qual.length?'ok':'');
   st.textContent=doneTxt;
   renderScreen(qual,misses,doneTxt);
@@ -1267,6 +1293,10 @@ document.getElementById('saveAvKey').addEventListener('click',()=>{
   setAvStatus(avInput.value.trim()?'History key saved — open ▾ Value on any card':'Key cleared — Value charts show projections', avInput.value.trim()?'ok':'');
 });
 avInput.addEventListener('keydown',e=>{ if(e.key==='Enter'){ setAvKey(avInput.value.trim()); setAvStatus('History key saved — open ▾ Value on any card','ok'); }});
+
+document.getElementById('restoreHidden').addEventListener('click',()=>{
+  hiddenB=[]; saveHidden(); render();
+});
 
 // screener controls
 document.getElementById('runScreen').addEventListener('click',runLynchScreen);

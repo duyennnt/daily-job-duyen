@@ -190,6 +190,22 @@ async function main() {
   <p style="color:#999;font-size:11px;margin-top:18px">Automated screen output — data snapshots, not investment advice. Stories are AI drafts from limited data.</p>
   </div>`;
   fs.writeFileSync('email-body.html', email);
+
+  // Send via Resend API if configured (no SMTP password needed)
+  const RESEND = process.env.RESEND_KEY, MAIL_TO = process.env.MAIL_TO, MAIL_FROM = process.env.MAIL_FROM || 'onboarding@resend.dev';
+  if (RESEND && MAIL_TO) {
+    try {
+      const r = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + RESEND, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from: 'Conviction Monitor <' + MAIL_FROM + '>', to: [MAIL_TO], subject: 'Nightly stock screen digest', html: email }),
+      });
+      console.log('Email send status:', r.status);
+      if (!r.ok) console.log('Email error:', await r.text());
+    } catch (e) { console.log('Email exception:', e.message); }
+  } else {
+    console.log('No RESEND_KEY/MAIL_TO — skipping email (results still committed).');
+  }
   console.log(`Done: ${qual.length} Lynch qualifiers, ${misses.length} near-misses, ${cands.length} magic-ranked. Wrote screen-results.json + email-body.html`);
 }
 

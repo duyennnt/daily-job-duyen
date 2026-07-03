@@ -166,6 +166,19 @@ async function main() {
     <p style="color:#999;font-size:11px;margin-top:16px">Sources: Greenhouse/Lever/Ashby boards you listed + Remotive + RemoteOK. Edit job-config.json in the repo to change criteria.</p>
     </div>`;
     fs.writeFileSync('jobs-email.html', email);
+
+    const RESEND = process.env.RESEND_KEY, MAIL_TO = process.env.MAIL_TO, MAIL_FROM = process.env.MAIL_FROM || 'onboarding@resend.dev';
+    if (RESEND && MAIL_TO) {
+      try {
+        const r = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + RESEND, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ from: 'Job Digest <' + MAIL_FROM + '>', to: [MAIL_TO], subject: `New job matches — ${digest.length}`, html: email }),
+        });
+        console.log('Email send status:', r.status);
+        if (!r.ok) console.log('Email error:', await r.text());
+      } catch (e) { console.log('Email exception:', e.message); }
+    }
   }
   console.log(`Scanned ${jobs.length} postings → ${matched.length} matched criteria → ${digest.length} NEW in digest.`);
 }

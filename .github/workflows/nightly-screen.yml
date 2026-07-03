@@ -2,8 +2,8 @@ name: nightly-screen
 
 on:
   schedule:
-    - cron: '0 2 * * 2-6'   # 02:00 UTC Tue–Sat = after US market close Mon–Fri
-  workflow_dispatch: {}      # adds a manual "Run workflow" button
+    - cron: '0 2 * * 2-6'
+  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -16,22 +16,20 @@ jobs:
   screen:
     runs-on: ubuntu-latest
     timeout-minutes: 300
-    env:
-      MAIL_USERNAME: ${{ secrets.MAIL_USERNAME }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-
-      - name: Run full-universe screen
+      - name: Run full-universe screen (sends email via Resend if configured)
         env:
           FINNHUB_KEY: ${{ secrets.FINNHUB_KEY }}
           GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
+          RESEND_KEY: ${{ secrets.RESEND_KEY }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
           SITE_URL: 'https://duyennnt.github.io/stock-watchlist/'
         run: node scripts/nightly.mjs
-
       - name: Commit results
         run: |
           git config user.name "screen-bot"
@@ -39,18 +37,3 @@ jobs:
           git add screen-results.json
           git diff --cached --quiet || git commit -m "Nightly screen $(date -u +%F)"
           git push
-
-      - name: Email digest
-        if: ${{ env.MAIL_USERNAME != '' }}
-        continue-on-error: true
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: smtp.gmail.com
-          server_port: 465
-          secure: true
-          username: ${{ secrets.MAIL_USERNAME }}
-          password: ${{ secrets.MAIL_PASSWORD }}
-          subject: 'Nightly stock screen digest'
-          to: ${{ secrets.MAIL_TO }}
-          from: Conviction Monitor
-          html_body: file://email-body.html

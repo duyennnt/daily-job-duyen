@@ -1,0 +1,59 @@
+name: daily-jobs
+
+on:
+  schedule:
+    - cron: '0 13 * * 1-5'   # 13:00 UTC weekdays ≈ 6am Pacific / 9am Eastern
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-jobs
+  cancel-in-progress: false
+
+jobs:
+  search:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      MAIL_USERNAME: ${{ secrets.MAIL_USERNAME }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run job search
+        env:
+          GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
+        run: node scripts/jobs.mjs
+
+      - name: Commit dedupe memory & results
+        run: |
+          git config user.name "job-bot"
+          git config user.email "actions@github.com"
+          git add seen-jobs.json jobs-results.json
+          git diff --cached --quiet || git commit -m "Job digest $(date -u +%F)"
+          git push
+
+      - name: Check for new matches
+        id: fresh
+        run: |
+          if [ -f jobs-email.html ]; then echo "send=yes" >> "$GITHUB_OUTPUT"; else echo "send=no" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Email digest
+        if: ${{ env.MAIL_USERNAME != '' && steps.fresh.outputs.send == 'yes' }}
+        continue-on-error: true
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: 'New job matches — daily digest'
+          to: ${{ secrets.MAIL_TO }}
+          from: Job Digest
+          html_body: file://jobs-email.html

@@ -77,7 +77,7 @@ async function geminiStory(t, name, x) {
     x.mc ? `market cap $${x.mc >= 1000 ? (x.mc / 1000).toFixed(1) + 'B' : x.mc.toFixed(0) + 'M'}` : null,
   ].filter(Boolean).join('\n');
   const prompt = 'You are an equity analyst. In 2 tight sentences: sentence 1 MUST answer why this stock is interesting right now (the bet); sentence 2 the main risk. No hedging, no advice, no preamble. Facts:\n' + facts;
-  for (const model of ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']) {
+  for (const model of ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.0-flash-001', 'gemini-2.5-flash-lite']) {
     try {
       const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEM}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },

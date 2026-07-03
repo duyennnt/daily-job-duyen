@@ -250,6 +250,9 @@
       <option value="name">Sort: Ticker A–Z</option>
     </select>
     <button class="btn" id="reset">Reset prices</button>
+    <button class="btn go" id="exportBtn" title="Download your notes, tickers & settings as a JSON backup">⬇ Export</button>
+    <button class="btn go" id="importBtn" title="Restore from a backup file">⬆ Import</button>
+    <input type="file" id="importFile" accept=".json,application/json" style="display:none">
   </div>
   <div class="saved" id="savedLine"></div>
 
@@ -411,7 +414,8 @@ async function fetchMetrics(symbol,key){
   return {
     eps: pick('epsTTM','epsBasicExclExtraItemsTTM','epsInclExtraItemsTTM','epsNormalizedAnnual'),
     hi: pick('52WeekHigh'),
-    lo: pick('52WeekLow')
+    lo: pick('52WeekLow'),
+    g: pick('epsGrowth5Y','epsGrowth3Y','epsGrowthTTMYoy')
   };
 }
 const newsMem={};
@@ -540,7 +544,8 @@ async function addTicker(){
       }catch(e){}
       try{
         const mt=await fetchMetrics(sym,key);
-        if(mt){ if(mt.eps!==null)entry.eps=mt.eps; if(mt.lo!==null)entry.lo=mt.lo; if(mt.hi!==null)entry.hi=mt.hi; }
+        if(mt){ if(mt.eps!==null)entry.eps=mt.eps; if(mt.lo!==null)entry.lo=mt.lo; if(mt.hi!==null)entry.hi=mt.hi;
+          if(mt.g!==null&&mt.g>0)entry.gr=Math.round(Math.min(mt.g,60)); }
       }catch(e){}
       try{ entry.news=pickTopNews(await fetchNews(sym)); }catch(e){}
       let recs=null, insNet=null;
@@ -760,7 +765,8 @@ function wire(){
       e.target.textContent='…';
       try{
         const mt=await fetchMetrics(sym,key);
-        if(mt){ if(mt.eps!==null)d.eps=mt.eps; if(mt.lo!==null)d.lo=mt.lo; if(mt.hi!==null)d.hi=mt.hi; }
+        if(mt){ if(mt.eps!==null)d.eps=mt.eps; if(mt.lo!==null)d.lo=mt.lo; if(mt.hi!==null)d.hi=mt.hi;
+          if(mt.g!==null&&mt.g>0&&num(d.gr)===null)d.gr=Math.round(Math.min(mt.g,60)); }
         try{ const pr=await fetch(`https://finnhub.io/api/v1/stock/profile2?symbol=${encodeURIComponent(sym)}&token=${encodeURIComponent(key)}`);
           if(pr.ok){ const pj=await pr.json(); if(pj&&pj.name)d.n=pj.name; if(pj&&pj.finnhubIndustry)d.sec=pj.finnhubIndustry; } }catch(x){}
         // next earnings date → catalyst
@@ -1266,6 +1272,33 @@ avInput.addEventListener('keydown',e=>{ if(e.key==='Enter'){ setAvKey(avInput.va
 document.getElementById('runScreen').addEventListener('click',runLynchScreen);
 document.getElementById('stopScreen').addEventListener('click',()=>{scrAbort=true;});
 showCachedScreen();
+
+// backup / restore (API keys are deliberately NOT exported — never commit keys)
+document.getElementById('exportBtn').addEventListener('click',()=>{
+  const payload={v:1, exported:new Date().toISOString(), state, customs};
+  const blob=new Blob([JSON.stringify(payload,null,1)],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='watchlist-backup-'+new Date().toISOString().slice(0,10)+'.json';
+  a.click(); URL.revokeObjectURL(a.href);
+});
+document.getElementById('importBtn').addEventListener('click',()=>document.getElementById('importFile').click());
+document.getElementById('importFile').addEventListener('change',e=>{
+  const f=e.target.files[0]; if(!f)return;
+  const rd=new FileReader();
+  rd.onload=()=>{
+    try{
+      const o=JSON.parse(rd.result);
+      if(!o||typeof o!=='object'||(!o.state&&!o.customs)) throw new Error('bad');
+      if(!confirm('Restore backup from '+(o.exported||'unknown date')+'? This replaces current notes, prices, ranks and custom tickers.'))return;
+      state=o.state||{}; customs=(o.customs||[]).filter(c=>!DATA.some(d=>d.t===c.t));
+      allData().forEach(d=>{ if(!(d.t in state)) state[d.t]={price:d.p,notes:''}; });
+      saveCustoms(); save(); render();
+      alert('Backup restored — '+Object.keys(state).length+' tickers of data loaded. (API keys are never in backups; paste those separately.)');
+    }catch(err){ alert('That file doesn\'t look like a watchlist backup.'); }
+  };
+  rd.readAsText(f); e.target.value='';
+});
 
 load();
 if(getKey()) refreshAll();   // auto-pull live prices on open when a key exists

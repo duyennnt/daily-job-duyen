@@ -241,8 +241,14 @@
     <span style="font-family:var(--mono);font-size:10.5px;color:var(--faint)">–</span>
     <input class="gr-in" id="cCapMax" type="number" step="1" min="0" style="width:52px" value="10">
     <span style="font-family:var(--mono);font-size:10.5px;color:var(--faint)">B</span>
+    <span style="font-family:var(--mono);font-size:10.5px;color:var(--pos)">· min margin %</span>
+    <input class="gr-in" id="cMargin" type="number" step="1" min="0" style="width:48px" value="5">
+    <label style="font-family:var(--mono);font-size:10.5px;color:var(--pos);display:flex;align-items:center;gap:4px;cursor:pointer">
+      <input type="checkbox" id="cQuality" checked style="accent-color:var(--pos)"> quality-of-earnings filter
+    </label>
     <span class="status" id="scrStatus">Dividend-adjusted PEG · shuffled universe · checked names cached 24h, so each run digs deeper</span>
   </div>
+  <div id="nightlyResults"></div>
   <div id="scrResults"></div>
 
   <div class="controls">
@@ -295,6 +301,13 @@
     <input class="keyin" id="avkey" type="password" placeholder="Paste free Alpha Vantage key (for historical Lynch charts)…" autocomplete="off">
     <button class="btn go" id="saveAvKey">Save key</button>
     <span class="status" id="avStatus">Optional — enables the true 15-yr price-vs-earnings chart. Free key at alphavantage.co (25 charts/day, cached locally).</span>
+  </div>
+
+  <div class="live-bar">
+    <span class="live-eyebrow">AI story key</span>
+    <input class="keyin" id="gkey" type="password" placeholder="Paste free Google Gemini key (AI-written stock stories)…" autocomplete="off">
+    <button class="btn go" id="saveGKey">Save key</button>
+    <span class="status" id="gStatus">Optional &amp; free — get a key at aistudio.google.com/apikey. With it, each card's Story is written by AI from its live data; without it, template drafts are used.</span>
   </div>
 
   <div id="tiers"></div>
@@ -418,6 +431,81 @@ async function fetchNews(sym){
   newsMem[sym]={ts:Date.now(),items};
   return items;
 }
+async function fetchWikiBlurb(name){
+  if(!name)return '';
+  const title=name.replace(/,? (Inc|Corp|Corporation|Ltd|PLC|Co|Company|Holdings|Group)\.?$/i,'').trim().replace(/ /g,'_');
+  try{
+    const r=await fetch('https://en.wikipedia.org/api/rest_v1/page/summary/'+encodeURIComponent(title));
+    if(!r.ok)return '';
+    const j=await r.json();
+    const ex=(j&&j.extract)||'';
+    const first=ex.split('. ')[0];
+    return first&&first.length>20?first.slice(0,220):'';
+  }catch(e){ return ''; }
+}
+// ---- Optional AI stories (Google Gemini free tier, user's own key) ----
+const GKEY='watchlist_gkey';
+let memG=null;
+function getGKey(){ try{ return localStorage.getItem(GKEY)||''; }catch(e){ return memG||''; } }
+function setGKey(v){ try{ localStorage.setItem(GKEY,v); }catch(e){ memG=v; } }
+const GEMINI_MODELS=['gemini-2.5-flash','gemini-2.0-flash','gemini-1.5-flash'];
+async function aiStory(d,recs,insNet,news,prod){
+  const key=getGKey(); if(!key)return null;
+  const p=num(state[d.t]?.price)??num(d.p), e=num(d.eps), lo=num(d.lo), hi=num(d.hi);
+  const facts=[
+    d.t+' ('+(d.n||'')+'), sector: '+(d.sec||'n/a'),
+    prod?('Business: '+prod):null,
+    p!==null?('Price $'+p):null,
+    (e!==null&&p!==null&&e>0)?('P/E '+(p/e).toFixed(1)+'x'):(e!==null&&e<=0?'Negative EPS (pre-profit)':null),
+    num(d.gr)!==null?('EPS growth ~'+d.gr+'%/yr'):null,
+    (lo!==null&&hi!==null)?('52-week range $'+lo+'–$'+hi):null,
+    recs?('Analyst ratings: '+((recs.strongBuy||0)+(recs.buy||0))+' buy / '+(recs.hold||0)+' hold / '+((recs.sell||0)+(recs.strongSell||0))+' sell'):null,
+    (insNet!==null&&insNet!==undefined)?('Insider net activity 90d: '+(insNet>0?'buying':insNet<0?'selling':'neutral')):null,
+    (news&&news.length)?('Recent headlines: '+news.slice(0,3).map(n=>n.h).join(' | ')):null
+  ].filter(Boolean).join('\n');
+  const prompt='You are an equity analyst. Based ONLY on these facts, write the investment story in 2-3 tight sentences. Sentence 1 MUST answer: why is this stock interesting right now — what is the bet? Then give the central bull-vs-bear tension, and what the market narrative currently is. No hedging boilerplate, no advice, no preamble. Facts:\n'+facts;
+  for(const model of GEMINI_MODELS){
+    try{
+      const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+model+':generateContent?key='+encodeURIComponent(key),{
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{temperature:0.4,maxOutputTokens:220}})
+      });
+      if(r.status===429||r.status===404) continue; // rate-limited or model unavailable → try next
+      if(!r.ok) continue;
+      const j=await r.json();
+      const txt=j&&j.candidates&&j.candidates[0]&&j.candidates[0].content&&j.candidates[0].content.parts
+        ? j.candidates[0].content.parts.map(x=>x.text||'').join('').trim() : '';
+      if(txt&&txt.length>40) return txt.slice(0,600);
+    }catch(e){}
+  }
+  return null;
+}
+function buildStory(d,recs,insNet,topHeadline){
+  const p=num(d.p), e=num(d.eps), lo=num(d.lo), hi=num(d.hi);
+  const bits=[];
+  if(e!==null&&e>0&&p!==null){
+    const pe=p/e; const pos=(lo!==null&&hi!==null&&hi>lo)?(p-lo)/(hi-lo)*100:null;
+    if(pe>=30&&pos!==null&&pos>66) bits.push('A momentum name at '+pe.toFixed(0)+'× earnings near its highs — the market is paying today for growth it expects tomorrow');
+    else if(pe>=30) bits.push('Richly valued at '+pe.toFixed(0)+'× — a growth story that has to keep delivering');
+    else if(pe<15&&pos!==null&&pos<40) bits.push('A value setup at '+pe.toFixed(0)+'× near the bottom of its range — cheap for a reason worth identifying');
+    else if(pe<15) bits.push('Priced modestly at '+pe.toFixed(0)+'× — either an overlooked bargain or a business the market has doubts about');
+    else bits.push('Mid-pack valuation at '+pe.toFixed(0)+'× — neither priced for perfection nor for trouble');
+  } else if(e!==null&&e<=0){
+    bits.push('A pre-profit story stock — the entire value rests on future execution, not current earnings');
+  }
+  const b=recs?(recs.strongBuy||0)+(recs.buy||0):null, s2=recs?(recs.sell||0)+(recs.strongSell||0):null;
+  const street = recs? (b>(recs.hold||0)&&b>s2?'bullish':s2>b?'bearish':'lukewarm') : null;
+  const insider = insNet===null||insNet===undefined?null:(insNet>0?'buying':insNet<0?'selling':'quiet');
+  if(street&&insider){
+    if(street==='bullish'&&insider==='selling') bits.push('the Street is bullish while insiders sell — outside enthusiasm, inside caution');
+    else if(street==='bullish'&&insider==='buying') bits.push('the Street is bullish and insiders are buying alongside — a rare alignment');
+    else if(street==='bearish'&&insider==='buying') bits.push('analysts are cold but insiders are buying — a classic contrarian tell');
+    else if(street==='lukewarm'&&insider==='buying') bits.push('a lukewarm Street with insiders buying — conviction inside before outside');
+    else bits.push('Street '+street+', insiders '+insider);
+  } else if(street) bits.push('Street consensus is '+street);
+  if(topHeadline) bits.push('the current storyline: "'+topHeadline.slice(0,90)+(topHeadline.length>90?'…':'')+'"');
+  return bits.length? bits.join('; ')+'.' : '';
+}
 async function fetchRecs(sym,key){
   const r=await fetch(`https://finnhub.io/api/v1/stock/recommendation?symbol=${encodeURIComponent(sym)}&token=${encodeURIComponent(key)}`);
   if(!r.ok)return null; const j=await r.json();
@@ -525,6 +613,7 @@ async function addTicker(){
           if(mt.g!==null&&mt.g>0)entry.gr=Math.round(Math.min(mt.g,60)); }
       }catch(e){}
       try{ entry.news=pickTopNews(await fetchNews(sym)); }catch(e){}
+      try{ const blurb=await fetchWikiBlurb(entry.n); if(blurb){ state[sym]=state[sym]||{}; state[sym].prod=blurb; } }catch(e){}
       let recs=null, insNet=null;
       try{ recs=await fetchRecs(sym,key); }catch(e){}
       try{
@@ -535,6 +624,11 @@ async function addTicker(){
           entry.ins = insNet>0?'buy':insNet<0?'sell':'neu'; }
       }catch(e){}
       entry.points=buildAutoPoints(entry,recs,insNet);
+      const topH=(entry.news&&entry.news[0])?entry.news[0].h:null;
+      let story=null, storyAI=false;
+      if(getGKey()){ try{ story=await aiStory(entry,recs,insNet,entry.news,state[sym]?.prod); storyAI=!!story; }catch(e){} }
+      if(!story) story=buildStory(entry,recs,insNet,topH);
+      if(story){ state[sym]=state[sym]||{}; state[sym].story=story; state[sym].storyAI=storyAI; }
       try{
         const fmt=x=>x.toISOString().slice(0,10);
         const ec=await fetch(`https://finnhub.io/api/v1/calendar/earnings?from=${fmt(new Date())}&to=${fmt(new Date(Date.now()+120*24*3600e3))}&symbol=${encodeURIComponent(sym)}&token=${encodeURIComponent(key)}`);
@@ -544,7 +638,7 @@ async function addTicker(){
     }catch(e){ if(e.message==='bad-key'){ setAddStatus('API key rejected — added in manual mode','err'); } }
   }
   customs.push(entry); saveCustoms();
-  state[sym]={price:entry.p,notes:'',live:!!(key&&entry.p)}; save();
+  state[sym]=Object.assign({notes:''},state[sym]||{},{price:entry.p,live:!!(key&&entry.p)}); save();
   document.getElementById('addSym').value='';
   render();
   if(entry.p) setAddStatus(sym+' added — '+entry.n+' @ $'+entry.p.toFixed(2),'ok');
@@ -601,6 +695,10 @@ function card(d){
     <div class="chart-box" data-chartbox="${d.t}"></div>
     <div class="tags">${d.tags.map(x=>`<span class="tag">${x}</span>`).join('')}<button class="tag" data-rm="${d.t}" title="Remove from watchlist${d.custom?'':' (restorable)'}" style="cursor:pointer;color:var(--neg);border-color:rgba(229,107,95,.4);background:transparent">✕ remove</button><button class="tag" data-fill="${d.t}" title="Auto-fill/refresh EPS, 52-wk range, insider read & headlines" style="cursor:pointer;color:var(--pos);border-color:rgba(64,185,138,.4);background:transparent">↻ autofill</button></div>
     ${d.custom?`<div class="metrics" style="grid-template-columns:1fr 1fr 1fr 1fr">${[['tgt','Target $'],['eps','EPS ttm'],['lo','52w low'],['hi','52w high']].map(([f,l])=>`<div class="m"><div class="mk">${l}</div><input class="price-in" style="width:100%;font-size:13px;padding:4px 6px" type="number" step="0.01" inputmode="decimal" value="${d[f]??''}" data-tkr="${d.t}" data-field="${f}" placeholder="—"></div>`).join('')}</div>`:''}
+    ${st.story?`<div style="border:1px solid var(--line);border-left:2px solid var(--t2);border-radius:9px;padding:8px 10px">
+      <div style="font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin-bottom:3px">Story <span style="color:var(--t2)">· ${st.storyAI?'AI draft (Gemini)':'auto-draft'} — overwrite with your own read</span></div>
+      <textarea class="notes" data-tkr="${d.t}" data-story="1" style="min-height:30px;background:transparent;border:0;padding:0;font-size:12.5px;color:var(--ink)">${st.story}</textarea>
+    </div>`:''}
     ${d.points&&d.points.length?`<div style="border:1px solid var(--line);border-left:2px solid var(--accent);border-radius:9px;padding:8px 10px">
       <div style="font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin-bottom:4px">Auto research</div>
       ${d.points.map(pt=>`<div style="font-size:12px;color:var(--ink);line-height:1.45;margin-top:3px">· ${pt.replace(/</g,'&lt;')}</div>`).join('')}
@@ -637,6 +735,7 @@ function card(d){
           : `<span class="lprem none">${num(d.eps)===null||d.eps<=0?'no earnings — no line':'set multiple'}</span>`}
       </div>`; })()}
     <div class="foot">
+      <div class="cat"><span class="clbl">Main product / revenue driver</span><input class="cfield" data-tkr="${d.t}" data-pfield="1" value="${(st.prod||'').replace(/"/g,'&quot;')}" placeholder="what actually makes the money — auto-fills on ↻ autofill"></div>
       <div class="cat"><span class="clbl">Next catalyst</span>${d.custom?`<input class="cfield" data-tkr="${d.t}" data-cfield="cat" value="${(d.cat||'').replace(/"/g,'&quot;')}" placeholder="e.g. Q2 earnings Aug 13">`:d.cat}</div>
       <div class="risk"><span class="clbl">Key risk</span>${d.custom?`<input class="cfield" data-tkr="${d.t}" data-cfield="risk" value="${(d.risk||'').replace(/"/g,'&quot;')}" placeholder="the one thing that breaks the thesis">`:d.risk}</div>
       <span class="insider ${d.ins}">${insTxt}</span>
@@ -648,6 +747,10 @@ function card(d){
         <span class="rank-lbl">Fin. Strength</span>
         <select class="rank ${st.fs?('g'+st.fs[0]):''}" data-tkr="${d.t}" data-rank="fs">
           <option value="">—</option>${['A++','A+','A','B++','B+','B','C++','C+','C'].map(g=>`<option value="${g}" ${st.fs===g?'selected':''}>${g}</option>`).join('')}
+        </select>
+        <span class="rank-lbl"><a href="https://www.morningstar.com/search?query=${d.t}" target="_blank" rel="noopener" style="color:var(--faint);text-decoration:underline dotted" title="Look up on Morningstar (opens their page; record the rating here)">M★</a></span>
+        <select class="rank ${st.ms?('r'+(6-Number(st.ms))):''}" data-tkr="${d.t}" data-rank="ms">
+          <option value="">—</option>${[5,4,3,2,1].map(r=>`<option value="${r}" ${st.ms==r?'selected':''}>${'★'.repeat(r)}</option>`).join('')}
         </select>
       </div>
       <textarea class="notes" data-tkr="${d.t}" placeholder="Your notes — thesis, price alerts, questions…">${st.notes||''}</textarea>
@@ -727,9 +830,15 @@ function wire(){
       }catch(err){ box.innerHTML='<div class="loadin">Couldn\'t load news — try again shortly</div>'; }
     });
   });
+  document.querySelectorAll('.cfield[data-pfield]').forEach(inp=>{
+    inp.addEventListener('input',e=>{
+      const t=e.target.dataset.tkr; state[t]=state[t]||{}; state[t].prod=e.target.value; save();
+    });
+  });
   document.querySelectorAll('.cfield').forEach(inp=>{
     inp.addEventListener('input',e=>{
       const t=e.target.dataset.tkr, f=e.target.dataset.cfield;
+      if(!f)return;
       const d=customs.find(x=>x.t===t); if(!d)return;
       d[f]=e.target.value; saveCustoms();
     });
@@ -767,10 +876,20 @@ function wire(){
         }catch(x){}
         // refresh research headlines + auto points
         try{ d.news=pickTopNews(await fetchNews(sym)); }catch(x){}
-        try{ const recs=await fetchRecs(sym,key); d.p=state[sym]?.price??d.p; d.points=buildAutoPoints(d,recs,insNet); }catch(x){}
+        try{ if(!state[sym]||!state[sym].prod){ const blurb=await fetchWikiBlurb(d.n); if(blurb){ state[sym]=state[sym]||{}; state[sym].prod=blurb; } } }catch(x){}
+        try{ const recs=await fetchRecs(sym,key); d.p=state[sym]?.price??d.p; d.points=buildAutoPoints(d,recs,insNet);
+          const topH=(d.news&&d.news[0])?d.news[0].h:null;
+          state[sym]=state[sym]||{};
+          if(!state[sym].storyEdited){
+            let story=null, storyAI=false;
+            if(getGKey()){ try{ story=await aiStory(d,recs,insNet,d.news,state[sym].prod); storyAI=!!story; }catch(x2){} }
+            if(!story) story=buildStory(d,recs,insNet,topH);
+            if(story){ state[sym].story=story; state[sym].storyAI=storyAI; }
+          }
+        }catch(x){}
         if(isCustom){ saveCustoms(); }
         else { overB[sym]={eps:d.eps,lo:d.lo,hi:d.hi,gr:d.gr,ins:d.ins,news:d.news,points:d.points}; saveOver(); }
-        render();
+        save(); render();
         setAddStatus(sym+' autofilled: '+(mt&&mt.eps!==null?('EPS '+mt.eps.toFixed(2)):'no EPS')+(mt&&mt.lo!==null?(' · 52w $'+mt.lo.toFixed(0)+'–$'+(mt.hi||0).toFixed(0)):''),'ok');
       }catch(err){ e.target.textContent='↻ autofill'; setAddStatus('Autofill failed for '+sym,'err'); }
     });
@@ -872,13 +991,17 @@ function wire(){
       const t=e.target.dataset.tkr, kind=e.target.dataset.rank, v=e.target.value;
       state[t]=state[t]||{};
       if(kind==='safety'){ state[t].safety = v===''?null:Number(v); e.target.className='rank '+(v?'r'+v:''); }
+      else if(kind==='ms'){ state[t].ms = v===''?null:Number(v); e.target.className='rank '+(v?('r'+(6-Number(v))):''); }
       else { state[t].fs = v===''?null:v; e.target.className='rank '+(v?('g'+v[0]):''); }
       save();
     });
   });
   document.querySelectorAll('.notes').forEach(ta=>{
     ta.addEventListener('input',e=>{
-      const t=e.target.dataset.tkr; state[t]=state[t]||{}; state[t].notes=e.target.value; save();
+      const t=e.target.dataset.tkr; state[t]=state[t]||{};
+      if(e.target.dataset.story){ state[t].story=e.target.value; state[t].storyEdited=true; }
+      else state[t].notes=e.target.value;
+      save();
     });
   });
 }
@@ -1025,6 +1148,7 @@ async function openFull(t){
       <span style="font-family:var(--mono);font-size:12px;color:${u===null?'var(--muted)':(u>=0?'var(--pos)':'var(--neg)')}">${u===null?'target —':'upside '+(u>=0?'+':'')+u.toFixed(0)+'%'}</span>
       ${st.safety?`<span style="font-family:var(--mono);font-size:12px;color:var(--muted)">Safety ${st.safety}</span>`:''}
       ${st.fs?`<span style="font-family:var(--mono);font-size:12px;color:var(--muted)">Fin.Str ${st.fs}</span>`:''}
+      ${st.ms?`<span style="font-family:var(--mono);font-size:12px;color:var(--warn)">M ${'★'.repeat(st.ms)}</span>`:''}
     </div>
     <div class="msec-title">Lynch value chart</div>
     <div class="mbox" id="fullLynch"><div class="loadin">Loading…</div></div>
@@ -1123,7 +1247,11 @@ function extractMetrics(m){
     dy:pick('currentDividendYieldTTM','dividendYieldIndicatedAnnual')||0,
     dte:pick('totalDebt/totalEquityQuarterly','totalDebt/totalEquityAnnual'),
     mc:pick('marketCapitalization'),
-    roc:pick('roiTTM','roiAnnual','roeTTM','roeRfy')   // return-on-capital proxy for Magic Formula
+    roc:pick('roiTTM','roiAnnual','roeTTM','roeRfy'),
+    npm:pick('netProfitMarginTTM','netProfitMarginAnnual'),          // net margin %
+    opm:pick('operatingMarginTTM','operatingMarginAnnual'),          // operating margin %
+    rev:pick('revenueTTM','revenuePerShareTTM'),                     // for NI<=rev sanity (per-share ok as ratio)
+    ni:pick('netIncomeTTM','netIncomeEmployeeTTM')                   // rarely present; margin is the reliable proxy
   };
 }
 async function getMetricsCached(t,key){
@@ -1144,6 +1272,14 @@ async function getNameCached(t,key){
   }catch(e){}
   return '';
 }
+function qualityCheck(x, minMargin){
+  const flags=[]; let fail=false;
+  if(!x) return {fail:true,flags:['no data']};
+  if(x.npm!==null && x.npm>100){ fail=true; flags.push('net margin >100% — profit exceeds revenue (non-operating gains)'); }
+  if(x.npm!==null && x.npm>=0 && x.npm<minMargin) flags.push('thin net margin '+x.npm.toFixed(1)+'% — fragile earnings');
+  if(x.roc!==null && x.opm!==null && x.opm>0 && x.roc>60 && x.roc>x.opm*4) flags.push('return far exceeds operating margin — likely one-time/investment gains');
+  return {fail, flags};
+}
 function judgeLynch(x,c){
   // returns {pass, peg, fails:[reasons]}
   if(!x) return {pass:false,fails:['no data']};
@@ -1158,12 +1294,13 @@ function judgeLynch(x,c){
   else if(x.dte>=c.dte_max) fails.push('D/E '+x.dte.toFixed(2)+' ≥ '+c.dte_max);
   return {pass:fails.length===0, peg, fails};
 }
-function scrRow(t,name,x,peg){
+function scrRow(t,name,x,peg,flags){
   return `<tr><td><b>${t}</b><div style="font-size:10px;color:var(--faint);font-weight:400">${(name||'').slice(0,26)}</div></td>
    <td class="good">${peg.toFixed(2)}</td><td>${x.pe.toFixed(1)}×</td>
    <td>${x.g.toFixed(0)}%</td><td>${x.dte!==null?x.dte.toFixed(2):'—'}</td><td>${x.dy.toFixed(1)}%</td>
    <td>${x.mc?('$'+(x.mc>=1000?(x.mc/1000).toFixed(1)+'B':x.mc.toFixed(0)+'M')):'—'}</td>
-   <td><button class="scr-add" data-scradd="${t}">+ watch</button></td></tr>`;
+   <td><button class="scr-add" data-scradd="${t}">+ watch</button></td></tr>
+   ${flags&&flags.length?`<tr><td colspan="8" style="color:var(--warn);font-size:11px;padding:2px 10px 8px;border-bottom:1px solid var(--line)">⚠ ${flags.join(' · ')}</td></tr>`:''}`;
 }
 function missRow(t,x,j){
   return `<tr><td><b>${t}</b></td><td colspan="6" style="color:var(--warn)">${j.fails[0]}</td>
@@ -1192,15 +1329,16 @@ function renderScreen(qual,misses,doneTxt){
   if(misses.length){ html+=scrTableShell('scrMiss','Near misses — failed exactly one test'); }
   if(!qual.length&&!misses.length&&doneTxt) html='<div class="loadin" style="padding:10px 2px">No qualifiers or near-misses this pass — the screen is strict by design. Loosen the thresholds above and re-run (cached names re-screen instantly).</div>';
   res.innerHTML=html+(doneTxt?'':'<div class="scr-bar"><i id="scrBarFill"></i></div>');
-  if(qual.length){ const b=document.getElementById('scrBody'); qual.forEach(q=>b.insertAdjacentHTML('beforeend',scrRow(q.t,q.name,q.x,q.peg))); }
+  if(qual.length){ const b=document.getElementById('scrBody'); qual.forEach(q=>b.insertAdjacentHTML('beforeend',scrRow(q.t,q.name,q.x,q.peg,q.flags))); }
   if(misses.length){ const b=document.getElementById('scrMiss'); misses.slice(0,12).forEach(q=>b.insertAdjacentHTML('beforeend',missRow(q.t,q.x,q.j))); }
   wireScrAdd();
 }
-function magicRow(rank,t,name,x){
+function magicRow(rank,t,name,x,flags){
   return `<tr><td>#${rank}</td><td><b>${t}</b><div style="font-size:10px;color:var(--faint);font-weight:400">${(name||'').slice(0,24)}</div></td>
    <td class="good">${(100/x.pe).toFixed(1)}%</td><td class="good">${x.roc.toFixed(1)}%</td><td>${x.pe.toFixed(1)}×</td>
    <td>${x.mc?('$'+(x.mc>=1000?(x.mc/1000).toFixed(1)+'B':x.mc.toFixed(0)+'M')):'—'}</td>
-   <td><button class="scr-add" data-scradd="${t}">+ watch</button></td></tr>`;
+   <td><button class="scr-add" data-scradd="${t}">+ watch</button></td></tr>
+   ${flags&&flags.length?`<tr><td colspan="7" style="color:var(--warn);font-size:11px;padding:2px 10px 8px;border-bottom:1px solid var(--line)">⚠ ${flags.join(' · ')}</td></tr>`:''}`;
 }
 async function renderMagic(cands,key,doneTxt){
   const res=document.getElementById('scrResults');
@@ -1212,7 +1350,7 @@ async function renderMagic(cands,key,doneTxt){
   for(const c of top){ if(!c.name) c.name=await getNameCached(c.t,key); }
   res.innerHTML='<div class="loadin" style="padding:8px 2px 0">Magic Formula — top 20 by combined rank (earnings yield + return on capital) · '+cands.length+' ranked'+(doneTxt?' · '+doneTxt:'')+'</div>'
    +'<table class="scr-table"><thead><tr><th>Rank</th><th>Ticker</th><th>Earn. yield</th><th>Ret. on cap</th><th>P/E</th><th>Mkt cap</th><th></th></tr></thead><tbody>'
-   +top.map((c,i)=>magicRow(i+1,c.t,c.name,c.x)).join('')+'</tbody></table>';
+   +top.map((c,i)=>magicRow(i+1,c.t,c.name,c.x,c.flags)).join('')+'</tbody></table>';
   wireScrAdd();
 }
 async function runLynchScreen(){
@@ -1224,6 +1362,8 @@ async function runLynchScreen(){
   const deep=document.getElementById('deepScan').checked;
   const capMin=(Number(document.getElementById('cCapMin').value)||0)*1000;
   const capMax=(Number(document.getElementById('cCapMax').value)||1e6)*1000;
+  const qualityOn=document.getElementById('cQuality').checked;
+  const minMargin=Number(document.getElementById('cMargin').value)||0;
   scrAbort=false;
   document.getElementById('runScreen').style.display='none';
   document.getElementById('stopScreen').style.display='';
@@ -1258,11 +1398,13 @@ async function runLynchScreen(){
       const {x,cached}=await getMetricsCached(t,key);
       const inBand = !deep || (x&&x.mc!==null&&x.mc>=capMin&&x.mc<=capMax);
       if(inBand&&x){
-        if(mode==='magic'){
-          if(x.pe!==null&&x.pe>0&&x.roc!==null&&!cands.some(q=>q.t===t)) cands.push({t,x});
+        const qc = qualityOn ? qualityCheck(x,minMargin) : {fail:false,flags:[]};
+        if(qualityOn && qc.fail){ /* mirage — skip entirely */ }
+        else if(mode==='magic'){
+          if(x.pe!==null&&x.pe>0&&x.roc!==null&&!cands.some(q=>q.t===t)) cands.push({t,x,flags:qc.flags});
         } else {
           const j=judgeLynch(x,c);
-          if(j.pass&&!qual.some(q=>q.t===t)){ const name=await getNameCached(t,key); qual.push({t,name,x,peg:j.peg}); renderScreen(qual,misses,null); }
+          if(j.pass&&!qual.some(q=>q.t===t)){ const name=await getNameCached(t,key); qual.push({t,name,x,peg:j.peg,flags:qc.flags}); renderScreen(qual,misses,null); }
           else if(!j.pass&&j.fails.length===1&&x.pe>0&&!misses.some(q=>q.t===t)){ misses.push({t,x,j}); if(misses.length<=12)renderScreen(qual,misses,null); }
         }
       }
@@ -1280,6 +1422,39 @@ async function runLynchScreen(){
   st.className='status ok'; st.textContent=doneTxt;
   if(mode==='magic'){ await renderMagic(cands,key,doneTxt); try{ localStorage.setItem('magic_screen',JSON.stringify({ts:Date.now(),cands})); }catch(e){} }
   else { renderScreen(qual,misses,doneTxt); try{ localStorage.setItem('lynch_screen',JSON.stringify({ts:Date.now(),qual,misses:misses.slice(0,12)})); }catch(e){} }
+}
+async function loadNightly(){
+  try{
+    const r=await fetch('screen-results.json?ts='+Date.now(),{cache:'no-store'});
+    if(!r.ok)return;
+    const o=await r.json(); if(!o||!o.ts)return;
+    const host=document.getElementById('nightlyResults'); if(!host)return;
+    const age=(Date.now()-o.ts)/3600e3;
+    let html='<div class="live-bar" style="border-left:2px solid var(--t2);flex-direction:column;align-items:stretch">'
+      +'<div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">'
+      +'<span class="live-eyebrow" style="color:var(--t2)">Nightly screen · GitHub job</span>'
+      +'<span class="status">Full US universe ('+(o.universe||'?')+' names, $'+(o.capBandM?o.capBandM[0]:'?')+'M–$'+(o.capBandM?o.capBandM[1]:'?')+'M) · generated '+new Date(o.ts).toLocaleString()+(age>30?' · <b style="color:var(--warn)">stale — check the Action</b>':'')+'</span></div>';
+    const ql=(o.lynch&&o.lynch.qual)||[];
+    if(ql.length){
+      html+=scrTableShell('nBody','Lynch qualifiers — sorted by PEG');
+    } else html+='<div class="loadin">No Lynch qualifiers in the last full pass — strict screen, honest result.</div>';
+    const mg=(o.magic&&o.magic.top)||[];
+    if(mg.length) html+=scrTableShell('nMagic','Magic Formula — top by combined rank');
+    html+='</div>';
+    host.innerHTML=html;
+    if(ql.length){
+      const b=document.getElementById('nBody');
+      ql.forEach(q=>{
+        b.insertAdjacentHTML('beforeend',scrRow(q.t,q.name,q.x,q.peg,q.flags));
+        if(q.story) b.insertAdjacentHTML('beforeend','<tr><td></td><td colspan="7" style="font-family:var(--body);font-size:11.5px;color:var(--muted);border-bottom:1px solid var(--line)">'+q.story.replace(/</g,'&lt;')+'</td></tr>');
+      });
+    }
+    if(mg.length){
+      const b=document.getElementById('nMagic');
+      mg.slice(0,15).forEach((c,i)=>b.insertAdjacentHTML('beforeend',magicRow(i+1,c.t,c.name,c.x,c.flags)));
+    }
+    wireScrAdd();
+  }catch(e){/* no nightly file yet — fine */}
 }
 function showCachedScreen(){
   restoreCrit();
@@ -1351,6 +1526,16 @@ document.getElementById('saveAvKey').addEventListener('click',()=>{
 });
 avInput.addEventListener('keydown',e=>{ if(e.key==='Enter'){ setAvKey(avInput.value.trim()); setAvStatus('History key saved — open ▾ Value on any card','ok'); }});
 
+// AI story key controls
+const gInput=document.getElementById('gkey');
+gInput.value=getGKey();
+function setGStatus(msg,cls){ const el=document.getElementById('gStatus'); el.textContent=msg; el.className='status'+(cls?' '+cls:''); }
+document.getElementById('saveGKey').addEventListener('click',()=>{
+  setGKey(gInput.value.trim());
+  setGStatus(gInput.value.trim()?'AI key saved — new adds and ↻ autofill now get AI-written stories':'Key cleared — template drafts', gInput.value.trim()?'ok':'');
+});
+gInput.addEventListener('keydown',e=>{ if(e.key==='Enter'){ setGKey(gInput.value.trim()); setGStatus('AI key saved — new adds and ↻ autofill now get AI-written stories','ok'); }});
+
 document.getElementById('restoreHidden').addEventListener('click',()=>{
   hiddenB=[]; saveHidden(); render();
 });
@@ -1359,6 +1544,7 @@ document.getElementById('restoreHidden').addEventListener('click',()=>{
 document.getElementById('runScreen').addEventListener('click',runLynchScreen);
 document.getElementById('stopScreen').addEventListener('click',()=>{scrAbort=true;});
 showCachedScreen();
+loadNightly();
 
 // backup / restore (API keys are deliberately NOT exported — never commit keys)
 document.getElementById('exportBtn').addEventListener('click',()=>{

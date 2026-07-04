@@ -440,15 +440,20 @@ async function fetchNews(sym){
 }
 async function fetchWikiBlurb(name){
   if(!name)return '';
-  const title=name.replace(/,? (Inc|Corp|Corporation|Ltd|PLC|Co|Company|Holdings|Group)\.?$/i,'').trim().replace(/ /g,'_');
-  try{
-    const r=await fetch('https://en.wikipedia.org/api/rest_v1/page/summary/'+encodeURIComponent(title));
-    if(!r.ok)return '';
-    const j=await r.json();
-    const ex=(j&&j.extract)||'';
-    const first=ex.split('. ')[0];
-    return first&&first.length>20?first.slice(0,220):'';
-  }catch(e){ return ''; }
+  const base=name.replace(/,? (Inc|Corp|Corporation|Ltd|PLC|Co|Company|Holdings|Group)\.?$/i,'').trim();
+  const variants=[base, base+' (company)', name.trim()];
+  for(const v of variants){
+    try{
+      const r=await fetch('https://en.wikipedia.org/api/rest_v1/page/summary/'+encodeURIComponent(v.replace(/ /g,'_')));
+      if(!r.ok)continue;
+      const j=await r.json();
+      if(j.type==='disambiguation')continue;
+      const ex=(j&&j.extract)||'';
+      const first=ex.split('. ')[0];
+      if(first&&first.length>20) return first.slice(0,220);
+    }catch(e){}
+  }
+  return '';
 }
 // ---- Optional AI stories (Google Gemini free tier, user's own key) ----
 const GKEY='watchlist_gkey';
@@ -475,7 +480,7 @@ async function aiStory(d,recs,insNet,news,prod){
   const p=num(state[d.t]?.price)??num(d.p), e=num(d.eps), lo=num(d.lo), hi=num(d.hi);
   const facts=[
     d.t+' ('+(d.n||'')+'), sector: '+(d.sec||'n/a'),
-    prod?('Business: '+prod):null,
+    prod?('Business: '+prod):('Business: '+(d.n||d.t)+', sector '+(d.sec||'unknown')+' (no description available)'),
     p!==null?('Price $'+p):null,
     (e!==null&&p!==null&&e>0)?('P/E '+(p/e).toFixed(1)+'x'):(e!==null&&e<=0?'Negative EPS (pre-profit)':null),
     num(d.gr)!==null?('EPS growth ~'+d.gr+'%/yr'):null,
@@ -484,7 +489,15 @@ async function aiStory(d,recs,insNet,news,prod){
     (insNet!==null&&insNet!==undefined)?('Insider net activity 90d: '+(insNet>0?'buying':insNet<0?'selling':'neutral')):null,
     (news&&news.length)?('Recent headlines: '+news.slice(0,3).map(n=>n.h).join(' | ')):null
   ].filter(Boolean).join('\n');
-  const prompt='You are an equity analyst. Based ONLY on these facts, write the investment story in 2-3 tight sentences. Sentence 1 MUST answer: why is this stock interesting right now — what is the bet? Then give the central bull-vs-bear tension, and what the market narrative currently is. No hedging boilerplate, no advice, no preamble. Facts:\n'+facts;
+  const prompt=`You are a sharp equity analyst writing a one-look summary for a fellow investor who will act on it. Rules:
+- 2-3 sentences, max ~55 words.
+- Sentence 1 must name the SINGLE most striking specific figure from the facts (a P/E, a margin, growth, range position, the Street split, or insider action) and what it implies.
+- Then the central tension: what makes it tempting vs. what should worry a buyer.
+- BANNED phrases: "compelling", "interesting bet", "opportunity", "presents a", "poised", "well-positioned", "strong player". If you catch yourself writing a generic opener, delete it and start with a number.
+- If the facts are too thin to say anything specific, say exactly that: "Thin data — only [what you have]; needs a manual look at [what's missing]."
+- No advice, no disclaimers, no preamble. Just the read.
+Facts:
+${facts}`;
   const discovered=await geminiPickModel(key);
   const models=discovered?[discovered,...GEMINI_MODELS.filter(m=>m!==discovered)]:GEMINI_MODELS;
   for(const model of models){
